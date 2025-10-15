@@ -51,11 +51,11 @@ DistributedCommerce is a microservices-based e-commerce platform using event-dri
                               │                               │
         ┌─────────────────────┼───────────────────┐           │
         ▼                     ▼                   ▼           │
-┌───────────────┐     ┌───────────────┐   ┌──────────────┐   │
-│  PostgreSQL   │     │ Redis Cluster │   │  Zookeeper   │   │
-│   (HA Setup)  │     │  (Caching +   │   │    (x3)      │   │
-│ Per-Service DB│     │ Rate Limiting)│   │              │   │
-└───────────────┘     └───────────────┘   └──────────────┘   │
+┌───────────────┐     ┌───────────────┐   ┌──────────────┐    │
+│  PostgreSQL   │     │ Redis Cluster │   │  Zookeeper   │    │
+│   (HA Setup)  │     │  (Caching +   │   │    (x3)      │    │
+│ Per-Service DB│     │ Rate Limiting)│   │              │    │
+└───────────────┘     └───────────────┘   └──────────────┘    │
                                                               │
         ┌─────────────────────────────────────────────────────┘
         │              BuildingBlocks (Shared Libraries)
