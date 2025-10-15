@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../BuildingBlocks/Application/BuildingBlocks.Application/BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="../../../BuildingBlocks/EventBus/BuildingBlocks.EventBus/BuildingBlocks.EventBus.csproj" />
+    <ProjectReference Include="../Notification.Domain/Notification.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

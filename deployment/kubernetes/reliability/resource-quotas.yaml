@@ -1,0 +1,112 @@
+# Resource Quotas and Limit Ranges
+# Prevents resource exhaustion and ensures fair usage
+
+---
+# Resource Quota for distributed-commerce namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: distributed-commerce-quota
+  namespace: distributed-commerce
+spec:
+  hard:
+    # Compute Resources
+    requests.cpu: "32"
+    requests.memory: "64Gi"
+    limits.cpu: "64"
+    limits.memory: "128Gi"
+    
+    # Storage
+    persistentvolumeclaims: "20"
+    requests.storage: "500Gi"
+    
+    # Object Count
+    pods: "100"
+    services: "50"
+    configmaps: "50"
+    secrets: "50"
+    
+    # Service Load Balancers
+    services.loadbalancers: "5"
+
+---
+# LimitRange for default resource limits
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: distributed-commerce-limits
+  namespace: distributed-commerce
+spec:
+  limits:
+  # Default limits for containers
+  - type: Container
+    default:
+      cpu: "1"
+      memory: "2Gi"
+    defaultRequest:
+      cpu: "250m"
+      memory: "512Mi"
+    max:
+      cpu: "4"
+      memory: "8Gi"
+    min:
+      cpu: "100m"
+      memory: "128Mi"
+  
+  # Limits for PVCs
+  - type: PersistentVolumeClaim
+    max:
+      storage: "100Gi"
+    min:
+      storage: "1Gi"
+
+---
+# Resource Quota for development environment
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: dev-quota
+  namespace: distributed-commerce-dev
+spec:
+  hard:
+    requests.cpu: "8"
+    requests.memory: "16Gi"
+    limits.cpu: "16"
+    limits.memory: "32Gi"
+    pods: "50"
+    persistentvolumeclaims: "10"
+    requests.storage: "100Gi"
+
+---
+# Resource Quota for staging environment
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: staging-quota
+  namespace: distributed-commerce-staging
+spec:
+  hard:
+    requests.cpu: "16"
+    requests.memory: "32Gi"
+    limits.cpu: "32"
+    limits.memory: "64Gi"
+    pods: "75"
+    persistentvolumeclaims: "15"
+    requests.storage: "250Gi"
+
+---
+# Resource Quota for production environment
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: prod-quota
+  namespace: distributed-commerce-prod
+spec:
+  hard:
+    requests.cpu: "64"
+    requests.memory: "128Gi"
+    limits.cpu: "128"
+    limits.memory: "256Gi"
+    pods: "150"
+    persistentvolumeclaims: "30"
+    requests.storage: "1Ti"

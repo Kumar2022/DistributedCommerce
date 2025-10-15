@@ -1,0 +1,119 @@
+# RBAC Configuration for Distributed Commerce
+# Implements least privilege access control
+
+---
+# Service Account for API Gateway
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: api-gateway-sa
+  namespace: distributed-commerce
+
+---
+# Service Account for backend services
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backend-service-sa
+  namespace: distributed-commerce
+
+---
+# Service Account for database migrations
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: db-migration-sa
+  namespace: distributed-commerce
+
+---
+# Role for backend services (limited permissions)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: backend-service-role
+  namespace: distributed-commerce
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["services", "endpoints"]
+  verbs: ["get", "list"]
+
+---
+# RoleBinding for backend services
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: backend-service-rolebinding
+  namespace: distributed-commerce
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: backend-service-role
+subjects:
+- kind: ServiceAccount
+  name: backend-service-sa
+  namespace: distributed-commerce
+
+---
+# Role for API Gateway (slightly elevated permissions)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: api-gateway-role
+  namespace: distributed-commerce
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+
+---
+# RoleBinding for API Gateway
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: api-gateway-rolebinding
+  namespace: distributed-commerce
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: api-gateway-role
+subjects:
+- kind: ServiceAccount
+  name: api-gateway-sa
+  namespace: distributed-commerce
+
+---
+# Role for database migrations (elevated permissions)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: db-migration-role
+  namespace: distributed-commerce
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["get", "list"]
+
+---
+# RoleBinding for database migrations
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: db-migration-rolebinding
+  namespace: distributed-commerce
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: db-migration-role
+subjects:
+- kind: ServiceAccount
+  name: db-migration-sa
+  namespace: distributed-commerce

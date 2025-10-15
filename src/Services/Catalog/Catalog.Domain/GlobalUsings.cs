@@ -1,0 +1,9 @@
+global using BuildingBlocks.Domain;
+global using BuildingBlocks.Domain.Aggregates;
+global using BuildingBlocks.Domain.Entities;
+global using BuildingBlocks.Domain.Events;
+global using System;
+global using System.Collections.Generic;
+global using System.Linq;
+global using System.Threading;
+global using System.Threading.Tasks;

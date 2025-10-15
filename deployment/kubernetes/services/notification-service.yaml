@@ -1,0 +1,147 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-service
+  namespace: distributed-commerce
+  labels:
+    app: notification-service
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: notification-service
+  template:
+    metadata:
+      labels:
+        app: notification-service
+        tier: backend
+    spec:
+      containers:
+      - name: notification-service
+        image: distributed-commerce/notification-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: ASPNETCORE_ENVIRONMENT
+          valueFrom:
+            configMapKeyRef:
+              name: shared-config
+              key: ASPNETCORE_ENVIRONMENT
+        - name: ASPNETCORE_URLS
+          value: "http://+:8080"
+        - name: ConnectionStrings__DefaultConnection
+          value: "Host=postgres-service;Port=5432;Database=NotificationDb;Username=$(POSTGRES_USER);Password=$(POSTGRES_PASSWORD)"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: shared-secrets
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: shared-secrets
+              key: POSTGRES_PASSWORD
+        - name: Kafka__BootstrapServers
+          valueFrom:
+            configMapKeyRef:
+              name: shared-config
+              key: KAFKA_BOOTSTRAP_SERVERS
+        - name: Kafka__SchemaRegistryUrl
+          valueFrom:
+            configMapKeyRef:
+              name: shared-config
+              key: KAFKA_SCHEMA_REGISTRY_URL
+        - name: SendGrid__ApiKey
+          valueFrom:
+            secretKeyRef:
+              name: shared-secrets
+              key: SENDGRID_API_KEY
+        - name: Twilio__AccountSid
+          valueFrom:
+            secretKeyRef:
+              name: shared-secrets
+              key: TWILIO_ACCOUNT_SID
+        - name: Twilio__AuthToken
+          valueFrom:
+            secretKeyRef:
+              name: shared-secrets
+              key: TWILIO_AUTH_TOKEN
+        - name: Firebase__ServerKey
+          valueFrom:
+            secretKeyRef:
+              name: shared-secrets
+              key: FIREBASE_SERVER_KEY
+        - name: OpenTelemetry__JaegerEndpoint
+          valueFrom:
+            configMapKeyRef:
+              name: shared-config
+              key: JAEGER_ENDPOINT
+        - name: Serilog__WriteTo__0__Args__serverUrl
+          valueFrom:
+            configMapKeyRef:
+              name: shared-config
+              key: SEQ_SERVER_URL
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notification-service
+  namespace: distributed-commerce
+spec:
+  selector:
+    app: notification-service
+  ports:
+  - port: 80
+    targetPort: 8080
+    name: http
+  type: ClusterIP
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: notification-service-hpa
+  namespace: distributed-commerce
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: notification-service
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80

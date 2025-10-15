@@ -1,0 +1,475 @@
+ version: '3.8'
+
+services:
+  # ===========================================
+  # INFRASTRUCTURE SERVICES
+  # ===========================================
+  
+  # PostgreSQL - Primary Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: distributed-commerce-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: DistributedCommerce
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    networks:
+      - commerce-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis - Caching & Distributed Locking
+  redis:
+    image: redis:7-alpine
+    container_name: distributed-commerce-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - commerce-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Zookeeper - Kafka Dependency
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: distributed-commerce-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - commerce-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Kafka - Event Bus
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: distributed-commerce-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    networks:
+      - commerce-network
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  # Schema Registry - Avro Schema Management
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.5.0
+    container_name: distributed-commerce-schema-registry
+    depends_on:
+      - kafka
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:9092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    networks:
+      - commerce-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/subjects"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Elasticsearch - Search Engine (Optional)
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: distributed-commerce-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    networks:
+      - commerce-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Seq - Centralized Logging (Optional)
+  seq:
+    image: datalust/seq:latest
+    container_name: distributed-commerce-seq
+    environment:
+      ACCEPT_EULA: Y
+    ports:
+      - "5341:80"
+      - "5342:5341"
+    volumes:
+      - seq-data:/data
+    networks:
+      - commerce-network
+
+  # Jaeger - Distributed Tracing
+  jaeger:
+    image: jaegertracing/all-in-one:1.51
+    container_name: distributed-commerce-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: 'true'
+    ports:
+      - "5775:5775/udp"
+      - "6831:6831/udp"
+      - "6832:6832/udp"
+      - "5778:5778"
+      - "16686:16686"
+      - "14268:14268"
+      - "14250:14250"
+      - "9411:9411"
+      - "4317:4317"  # OTLP gRPC
+      - "4318:4318"  # OTLP HTTP
+    networks:
+      - commerce-network
+
+  # ===========================================
+  # MICROSERVICES
+  # ===========================================
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: ../../
+      dockerfile: src/ApiGateways/ApiGateway/Dockerfile
+    container_name: distributed-commerce-api-gateway
+    depends_on:
+      - identity-service
+      - order-service
+      - payment-service
+      - inventory-service
+      - catalog-service
+      - shipping-service
+      - notification-service
+      - analytics-service
+      - jaeger
+    ports:
+      - "5000:8080"
+      - "5001:8081"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080;https://+:8081
+      - ASPNETCORE_Kestrel__Certificates__Default__Password=password
+      - ASPNETCORE_Kestrel__Certificates__Default__Path=/https/aspnetapp.pfx
+      - Jwt__SecretKey=ThisIsAVerySecureSecretKeyForJWTTokenGenerationAndValidation1234567890
+      - Jwt__Issuer=https://api-gateway:8081
+      - Jwt__Audience=distributed-commerce
+      - OpenTelemetry__JaegerEndpoint=http://jaeger:4317
+      - Serilog__WriteTo__0__Args__serverUrl=http://seq:5341
+    networks:
+      - commerce-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Identity Service
+  identity-service:
+    build:
+      context: ../../
+      dockerfile: src/Services/Identity/Identity.API/Dockerfile
+    container_name: distributed-commerce-identity
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "5010:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=IdentityDb;Username=postgres;Password=postgres
+      - ConnectionStrings__RedisConnection=redis:6379
+      - Kafka__BootstrapServers=kafka:9092
+      - Kafka__SchemaRegistryUrl=http://schema-registry:8081
+      - Jwt__SecretKey=ThisIsAVerySecureSecretKeyForJWTTokenGenerationAndValidation1234567890
+      - Jwt__Issuer=https://identity-service:8080
+      - Jwt__Audience=distributed-commerce
+      - OpenTelemetry__JaegerEndpoint=http://jaeger:4317
+      - Serilog__WriteTo__0__Args__serverUrl=http://seq:5341
+    networks:
+      - commerce-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Order Service
+  order-service:
+    build:
+      context: ../../
+      dockerfile: src/Services/Order/Order.API/Dockerfile
+    container_name: distributed-commerce-order
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "5020:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=OrderDb;Username=postgres;Password=postgres
+      - Kafka__BootstrapServers=kafka:9092
+      - Kafka__SchemaRegistryUrl=http://schema-registry:8081
+      - OpenTelemetry__JaegerEndpoint=http://jaeger:4317
+      - Serilog__WriteTo__0__Args__serverUrl=http://seq:5341
+    networks:
+      - commerce-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Payment Service
+  payment-service:
+    build:
+      context: ../../
+      dockerfile: src/Services/Payment/Payment.API/Dockerfile
+    container_name: distributed-commerce-payment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "5030:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=PaymentDb;Username=postgres;Password=postgres
+      - Kafka__BootstrapServers=kafka:9092
+      - Kafka__SchemaRegistryUrl=http://schema-registry:8081
+      - Stripe__SecretKey=${STRIPE_SECRET_KEY}
+      - Stripe__WebhookSecret=${STRIPE_WEBHOOK_SECRET}
+      - OpenTelemetry__JaegerEndpoint=http://jaeger:4317
+      - Serilog__WriteTo__0__Args__serverUrl=http://seq:5341
+    networks:
+      - commerce-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Inventory Service
+  inventory-service:
+    build:
+      context: ../../
+      dockerfile: src/Services/Inventory/Inventory.API/Dockerfile
+    container_name: distributed-commerce-inventory
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "5040:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=InventoryDb;Username=postgres;Password=postgres
+      - ConnectionStrings__RedisConnection=redis:6379
+      - Kafka__BootstrapServers=kafka:9092
+      - Kafka__SchemaRegistryUrl=http://schema-registry:8081
+      - OpenTelemetry__JaegerEndpoint=http://jaeger:4317
+      - Serilog__WriteTo__0__Args__serverUrl=http://seq:5341
+    networks:
+      - commerce-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Catalog Service
+  catalog-service:
+    build:
+      context: ../../
+      dockerfile: src/Services/Catalog/Catalog.API/Dockerfile
+    container_name: distributed-commerce-catalog
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    ports:
+      - "5050:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=CatalogDb;Username=postgres;Password=postgres
+      - Kafka__BootstrapServers=kafka:9092
+      - Kafka__SchemaRegistryUrl=http://schema-registry:8081
+      - Elasticsearch__Uri=http://elasticsearch:9200
+      - OpenTelemetry__JaegerEndpoint=http://jaeger:4317
+      - Serilog__WriteTo__0__Args__serverUrl=http://seq:5341
+    networks:
+      - commerce-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Shipping Service
+  shipping-service:
+    build:
+      context: ../../
+      dockerfile: src/Services/Shipping/Shipping.API/Dockerfile
+    container_name: distributed-commerce-shipping
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "5060:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=ShippingDb;Username=postgres;Password=postgres
+      - Kafka__BootstrapServers=kafka:9092
+      - Kafka__SchemaRegistryUrl=http://schema-registry:8081
+      - OpenTelemetry__JaegerEndpoint=http://jaeger:4317
+      - Serilog__WriteTo__0__Args__serverUrl=http://seq:5341
+    networks:
+      - commerce-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Notification Service
+  notification-service:
+    build:
+      context: ../../
+      dockerfile: src/Services/Notification/Notification.API/Dockerfile
+    container_name: distributed-commerce-notification
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "5070:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=NotificationDb;Username=postgres;Password=postgres
+      - Kafka__BootstrapServers=kafka:9092
+      - Kafka__SchemaRegistryUrl=http://schema-registry:8081
+      - SendGrid__ApiKey=${SENDGRID_API_KEY}
+      - Twilio__AccountSid=${TWILIO_ACCOUNT_SID}
+      - Twilio__AuthToken=${TWILIO_AUTH_TOKEN}
+      - Firebase__ServerKey=${FIREBASE_SERVER_KEY}
+      - OpenTelemetry__JaegerEndpoint=http://jaeger:4317
+      - Serilog__WriteTo__0__Args__serverUrl=http://seq:5341
+    networks:
+      - commerce-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Analytics Service
+  analytics-service:
+    build:
+      context: ../../
+      dockerfile: src/Services/Analytics/Analytics.API/Dockerfile
+    container_name: distributed-commerce-analytics
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "5080:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=AnalyticsDb;Username=postgres;Password=postgres
+      - Kafka__BootstrapServers=kafka:9092
+      - Kafka__SchemaRegistryUrl=http://schema-registry:8081
+      - OpenTelemetry__JaegerEndpoint=http://jaeger:4317
+      - Serilog__WriteTo__0__Args__serverUrl=http://seq:5341
+    networks:
+      - commerce-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+# ===========================================
+# NETWORKS
+# ===========================================
+
+networks:
+  commerce-network:
+    driver: bridge
+    name: distributed-commerce-network
+
+# ===========================================
+# VOLUMES
+# ===========================================
+
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  elasticsearch-data:
+    driver: local
+  seq-data:
+    driver: local

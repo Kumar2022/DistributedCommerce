@@ -1,0 +1,631 @@
+using BuildingBlocks.EventBus.Abstractions;
+using BuildingBlocks.Saga.Abstractions;
+using BuildingBlocks.Saga.Storage;
+using BuildingBlocks.Infrastructure.Inbox;
+using BuildingBlocks.Infrastructure.Outbox;
+using FluentAssertions;
+using Marten;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Order.Application.DTOs;
+using Order.Application.Sagas;
+using System.Net.Http.Json;
+using Testcontainers.Kafka;
+using Testcontainers.PostgreSql;
+using Testcontainers.Redis;
+using Xunit;
+
+namespace Order.IntegrationTests.Sagas;
+
+/// <summary>
+/// End-to-End integration tests for Order Creation Saga
+/// Tests the complete distributed transaction flow:
+/// Order → Inventory Reservation → Payment Processing → Order Confirmation
+/// Also tests compensation flows when steps fail
+/// </summary>
+[Collection("SagaTests")]
+[Trait("Category", "Integration")]
+[Trait("Category", "Saga")]
+public class OrderCreationSagaTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLifetime
+{
+    private readonly WebApplicationFactory<Program> _factory;
+    private HttpClient _client = null!;
+    private readonly PostgreSqlContainer _postgresContainer;
+    private readonly RedisContainer _redisContainer;
+    private readonly KafkaContainer _kafkaContainer;
+
+    public OrderCreationSagaTests(WebApplicationFactory<Program> factory)
+    {
+        _factory = factory;
+        
+        _postgresContainer = new PostgreSqlBuilder()
+            .WithImage("postgres:16-alpine")
+            .WithDatabase("distributed_commerce_test")
+            .WithUsername("test")
+            .WithPassword("test")
+            .WithCleanUp(true)
+            .Build();
+
+        _redisContainer = new RedisBuilder()
+            .WithImage("redis:7-alpine")
+            .WithCleanUp(true)
+            .Build();
+
+        _kafkaContainer = new KafkaBuilder()
+            .WithImage("confluentinc/cp-kafka:7.5.0")
+            .WithCleanUp(true)
+            .Build();
+    }
+
+    public async Task InitializeAsync()
+    {
+        // Start all infrastructure containers
+        await Task.WhenAll(
+            _postgresContainer.StartAsync(),
+            _redisContainer.StartAsync(),
+            _kafkaContainer.StartAsync()
+        );
+
+        // Create HTTP client with test configuration
+        _client = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                // Replace production services with test containers
+                services.Configure<ConnectionStrings>(options =>
+                {
+                    options.PostgreSql = _postgresContainer.GetConnectionString();
+                    options.Redis = _redisContainer.GetConnectionString();
+                    options.Kafka = _kafkaContainer.GetBootstrapAddress();
+                });
+            });
+        }).CreateClient();
+
+        // Apply migrations - Order service uses Marten (Event Sourcing), not EF
+        using var scope = _factory.Services.CreateScope();
+        var documentStore = scope.ServiceProvider.GetRequiredService<IDocumentStore>();
+        await documentStore.Storage.ApplyAllConfiguredChangesToDatabaseAsync();
+    }
+
+    public async Task DisposeAsync()
+    {
+        await Task.WhenAll(
+            _postgresContainer.DisposeAsync().AsTask(),
+            _redisContainer.DisposeAsync().AsTask(),
+            _kafkaContainer.DisposeAsync().AsTask()
+        );
+
+        _client?.Dispose();
+    }
+
+    #region Happy Path Tests
+
+    [Fact(DisplayName = "Saga Happy Path: Order → Inventory Reserved → Payment Succeeded → Order Confirmed")]
+    [Trait("TestType", "HappyPath")]
+    public async Task OrderCreationSaga_WhenAllStepsSucceed_ShouldCompleteSuccessfully()
+    {
+        // Arrange
+        var createOrderRequest = new CreateOrderRequest
+        {
+            CustomerId = Guid.NewGuid(),
+            Items = new[]
+            {
+                new OrderItemDto
+                {
+                    ProductId = Guid.NewGuid(),
+                    ProductName = "Test Product",
+                    Quantity = 2,
+                    UnitPrice = 100.00m
+                }
+            },
+            ShippingAddress = new AddressDto
+            {
+                Street = "123 Main St",
+                City = "Springfield",
+                State = "IL",
+                ZipCode = "62701",
+                Country = "USA"
+            }
+        };
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/orders", createOrderRequest);
+
+        // Assert
+        response.Should().BeSuccessful("order creation should succeed");
+        var orderId = await response.Content.ReadFromJsonAsync<Guid>();
+        orderId.Should().NotBeEmpty("a valid order ID should be returned");
+
+        // Wait for saga completion (with timeout)
+        var sagaState = await WaitForSagaCompletionAsync(orderId, TimeSpan.FromSeconds(30));
+
+        // Verify saga completed successfully
+        sagaState.Should().NotBeNull("saga state should exist");
+        sagaState!.Status.Should().Be(SagaStatus.Completed, "saga should complete successfully");
+        sagaState.IsInventoryReserved.Should().BeTrue("inventory should be reserved");
+        sagaState.IsPaymentProcessed.Should().BeTrue("payment should be processed");
+        sagaState.CompletedAt.Should().NotBeNull("completion timestamp should be set");
+
+        // Verify order is confirmed
+        var order = await GetOrderAsync(orderId);
+        order.Should().NotBeNull("order should exist");
+        order!.Status.Should().Be("Confirmed", "order should be confirmed");
+        order.TotalAmount.Should().Be(200.00m, "total amount should match items");
+
+        // Verify all domain events were raised
+        var domainEvents = await GetDomainEventsAsync(orderId);
+        domainEvents.Should().Contain(e => e.EventType == "OrderCreated");
+        domainEvents.Should().Contain(e => e.EventType == "InventoryReserved");
+        domainEvents.Should().Contain(e => e.EventType == "PaymentSucceeded");
+        domainEvents.Should().Contain(e => e.EventType == "OrderConfirmed");
+
+        // Verify integration events were published to Kafka
+        var integrationEvents = await GetPublishedEventsAsync(orderId);
+        integrationEvents.Should().Contain(e => e.EventType == "OrderCreatedIntegrationEvent");
+        integrationEvents.Should().Contain(e => e.EventType == "InventoryReservationRequestedEvent");
+        integrationEvents.Should().Contain(e => e.EventType == "PaymentRequestedEvent");
+    }
+
+    [Fact(DisplayName = "Saga Performance: Should complete within 5 seconds under normal conditions")]
+    [Trait("TestType", "Performance")]
+    public async Task OrderCreationSaga_Performance_ShouldCompleteWithin5Seconds()
+    {
+        // Arrange
+        var createOrderRequest = CreateTestOrderRequest();
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/orders", createOrderRequest);
+        var orderId = await response.Content.ReadFromJsonAsync<Guid>();
+
+        var sagaState = await WaitForSagaCompletionAsync(orderId, TimeSpan.FromSeconds(10));
+        stopwatch.Stop();
+
+        // Assert
+        sagaState!.Status.Should().Be(SagaStatus.Completed);
+        stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(5), 
+            "saga should complete within 5 seconds for good user experience");
+    }
+
+    #endregion
+
+    #region Compensation Tests
+
+    [Fact(DisplayName = "Saga Compensation: Payment Failure → Release Inventory → Cancel Order")]
+    [Trait("TestType", "Compensation")]
+    public async Task OrderCreationSaga_WhenPaymentFails_ShouldCompensateSuccessfully()
+    {
+        // Arrange - Mock payment gateway to fail
+        MockPaymentGatewayFailure("Insufficient funds");
+        
+        var createOrderRequest = CreateTestOrderRequest();
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/orders", createOrderRequest);
+        var orderId = await response.Content.ReadFromJsonAsync<Guid>();
+
+        // Wait for saga to fail and compensate
+        var sagaState = await WaitForSagaCompletionAsync(orderId, TimeSpan.FromSeconds(30));
+
+        // Assert
+        sagaState.Should().NotBeNull("saga state should exist");
+        sagaState!.Status.Should().Be(SagaStatus.Compensated, "saga should be compensated after payment failure");
+        sagaState.IsInventoryReserved.Should().BeTrue("inventory was initially reserved");
+        sagaState.IsPaymentProcessed.Should().BeFalse("payment should have failed");
+        sagaState.CompletedAt.Should().NotBeNull("compensation timestamp should be set");
+        sagaState.ErrorMessage.Should().Contain("Insufficient funds", "failure reason should be recorded");
+
+        // Verify inventory was released (compensation)
+        var productId = createOrderRequest.Items[0].ProductId;
+        var product = await GetProductAsync(productId);
+        product.Should().NotBeNull("product should exist");
+        product!.AvailableStock.Should().Be(product.InitialStock, "inventory should be released back");
+        product.ReservedStock.Should().Be(0, "no stock should remain reserved");
+
+        // Verify order was cancelled
+        var order = await GetOrderAsync(orderId);
+        order.Should().NotBeNull("order should exist");
+        order!.Status.Should().Be("Cancelled", "order should be cancelled");
+        order.CancellationReason.Should().Contain("Payment failed", "cancellation reason should be set");
+
+        // Verify compensation events were published
+        var integrationEvents = await GetPublishedEventsAsync(orderId);
+        integrationEvents.Should().Contain(e => e.EventType == "InventoryReservationReleasedEvent");
+        integrationEvents.Should().Contain(e => e.EventType == "OrderCancelledEvent");
+    }
+
+    [Fact(DisplayName = "Saga Compensation: Insufficient Inventory → Immediate Failure")]
+    [Trait("TestType", "Compensation")]
+    public async Task OrderCreationSaga_WhenInventoryUnavailable_ShouldFailImmediately()
+    {
+        // Arrange - Create order for product with insufficient stock
+        var productId = await CreateProductWithStock(quantity: 1);
+        
+        var createOrderRequest = new CreateOrderRequest
+        {
+            CustomerId = Guid.NewGuid(),
+            Items = new[]
+            {
+                new OrderItemDto
+                {
+                    ProductId = productId,
+                    ProductName = "Test Product",
+                    Quantity = 10, // More than available
+                    UnitPrice = 100.00m
+                }
+            },
+            ShippingAddress = CreateTestAddress()
+        };
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/orders", createOrderRequest);
+        var orderId = await response.Content.ReadFromJsonAsync<Guid>();
+
+        // Wait for saga to fail
+        var sagaState = await WaitForSagaCompletionAsync(orderId, TimeSpan.FromSeconds(30));
+
+        // Assert
+        sagaState.Should().NotBeNull("saga state should exist");
+        sagaState!.Status.Should().Be(SagaStatus.Failed, "saga should fail when inventory is unavailable");
+        sagaState.IsInventoryReserved.Should().BeFalse("inventory reservation should have failed");
+        sagaState.IsPaymentProcessed.Should().BeFalse("payment should not be attempted");
+        sagaState.CompletedAt.Should().NotBeNull("failure timestamp should be set");
+        sagaState.ErrorMessage.Should().Contain("Insufficient stock", "failure reason should indicate stock issue");
+
+        // Verify order was cancelled
+        var order = await GetOrderAsync(orderId);
+        order.Should().NotBeNull("order should exist");
+        order!.Status.Should().Be("Cancelled", "order should be cancelled");
+        order.CancellationReason.Should().Contain("Insufficient stock", "cancellation reason should be set");
+
+        // Verify no payment was attempted
+        var payments = await GetPaymentsForOrderAsync(orderId);
+        payments.Should().BeEmpty("no payment should be attempted when inventory fails");
+    }
+
+    #endregion
+
+    #region Idempotency Tests
+
+    /* TODO: Implement Idempotency test - requires event class definitions
+    [Fact(DisplayName = "Idempotency: Duplicate Events → Process Only Once")]
+    [Trait("TestType", "Idempotency")]
+    public async Task OrderCreationSaga_WhenDuplicateEventsReceived_ShouldProcessOnlyOnce()
+    {
+        // This test requires defining InventoryReservationConfirmedEvent and related types
+        // Will be implemented after event schemas are finalized
+        await Task.CompletedTask;
+    }
+    */
+
+        // Wait for saga completion
+        var sagaState = await WaitForSagaCompletionAsync(orderId, TimeSpan.FromSeconds(30));
+
+        // Assert - Payment should be processed only once
+        sagaState!.Status.Should().Be(SagaStatus.Completed);
+        
+        var payments = await GetPaymentsForOrderAsync(orderId);
+        payments.Should().HaveCount(1, "payment should be processed only once despite duplicate events");
+
+        // Verify inbox pattern worked - only one processed message for this event
+        var inboxMessages = await GetInboxMessagesAsync(inventoryEvent.EventId);
+        inboxMessages.Should().HaveCount(1, "inbox should deduplicate events");
+        inboxMessages.First().ProcessedAt.Should().NotBeNull("message should be marked as processed");
+        inboxMessages.First().ProcessedCount.Should().Be(1, "message should be processed exactly once");
+    }
+
+    [Fact(DisplayName = "Idempotency: Concurrent Saga Executions → One Succeeds")]
+    [Trait("TestType", "Idempotency")]
+    public async Task OrderCreationSaga_WhenConcurrentExecutions_ShouldHandleGracefully()
+    {
+        // Arrange
+        var createOrderRequest = CreateTestOrderRequest();
+
+        // Act - Submit the same order multiple times concurrently
+        var tasks = Enumerable.Range(0, 5)
+            .Select(_ => _client.PostAsJsonAsync("/api/orders", createOrderRequest))
+            .ToArray();
+
+        var responses = await Task.WhenAll(tasks);
+
+        // Assert - All requests should return 200, but only one saga should execute
+        foreach (var response in responses)
+        {
+            response.Should().BeSuccessful("all requests should be accepted");
+        }
+
+        var orderIds = await Task.WhenAll(
+            responses.Select(r => r.Content.ReadFromJsonAsync<Guid>())
+        );
+
+        // Due to idempotency, we might get the same orderId or different ones
+        // The key is that inventory should only be reserved once
+        var uniqueOrderIds = orderIds.Distinct().ToList();
+        
+        foreach (var orderId in uniqueOrderIds)
+        {
+            var sagaState = await WaitForSagaCompletionAsync(orderId, TimeSpan.FromSeconds(30));
+            sagaState.Should().NotBeNull();
+        }
+
+        // Verify inventory was only deducted for successful orders
+        var productId = createOrderRequest.Items[0].ProductId;
+        var product = await GetProductAsync(productId);
+        var expectedReserved = uniqueOrderIds.Count * createOrderRequest.Items[0].Quantity;
+        product!.ReservedStock.Should().BeLessOrEqualTo(expectedReserved, 
+            "inventory should not be over-reserved due to concurrent requests");
+    }
+
+    #endregion
+
+    #region Timeout & Error Handling Tests
+
+    [Fact(DisplayName = "Timeout Handling: Saga Timeout → Compensate")]
+    [Trait("TestType", "Timeout")]
+    public async Task OrderCreationSaga_WhenStepTimesOut_ShouldCompensate()
+    {
+        // Arrange - Configure payment service to delay beyond timeout
+        MockPaymentGatewayDelay(TimeSpan.FromSeconds(60));
+        
+        var createOrderRequest = CreateTestOrderRequest();
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/orders", createOrderRequest);
+        var orderId = await response.Content.ReadFromJsonAsync<Guid>();
+
+        // Wait for saga timeout and compensation
+        var sagaState = await WaitForSagaCompletionAsync(orderId, TimeSpan.FromMinutes(2));
+
+        // Assert
+        sagaState.Should().NotBeNull();
+        sagaState!.Status.Should().BeOneOf(SagaStatus.Compensated, SagaStatus.Failed,
+            "saga should compensate or fail after timeout");
+        sagaState.ErrorMessage.Should().Contain("timeout", StringComparison.OrdinalIgnoreCase,
+            "failure reason should mention timeout");
+
+        // Verify inventory was released
+        var productId = createOrderRequest.Items[0].ProductId;
+        var product = await GetProductAsync(productId);
+        product!.ReservedStock.Should().Be(0, "inventory should be released after timeout");
+    }
+
+    [Fact(DisplayName = "Error Handling: Transient Failure → Retry → Success")]
+    [Trait("TestType", "ErrorHandling")]
+    public async Task OrderCreationSaga_WhenTransientFailure_ShouldRetryAndSucceed()
+    {
+        // Arrange - Mock payment gateway to fail twice then succeed
+        MockPaymentGatewayTransientFailure(failCount: 2);
+        
+        var createOrderRequest = CreateTestOrderRequest();
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/orders", createOrderRequest);
+        var orderId = await response.Content.ReadFromJsonAsync<Guid>();
+
+        // Wait for saga completion (should succeed after retries)
+        var sagaState = await WaitForSagaCompletionAsync(orderId, TimeSpan.FromMinutes(1));
+
+        // Assert
+        sagaState.Should().NotBeNull();
+        sagaState!.Status.Should().Be(SagaStatus.Completed, 
+            "saga should eventually succeed after transient failures");
+        // Note: Retry tracking can be added to SagaState if needed for observability
+        sagaState.CompletedSteps.Should().NotBeEmpty("saga should have completed steps tracked");
+
+        // Verify order is confirmed despite initial failures
+        var order = await GetOrderAsync(orderId);
+        order!.Status.Should().Be("Confirmed");
+    }
+
+    #endregion
+
+    #region Helper Methods
+
+    private async Task<OrderCreationSagaState?> WaitForSagaCompletionAsync(
+        Guid orderId, 
+        TimeSpan timeout)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var sagaRepository = scope.ServiceProvider
+            .GetRequiredService<ISagaStateRepository<OrderCreationSagaState>>();
+
+        var start = DateTime.UtcNow;
+        while (DateTime.UtcNow - start < timeout)
+        {
+            var saga = await sagaRepository.GetByCorrelationIdAsync(orderId);
+            if (saga != null && 
+                (saga.Status == SagaStatus.Completed || 
+                 saga.Status == SagaStatus.Failed || 
+                 saga.Status == SagaStatus.Compensated))
+            {
+                return saga;
+            }
+
+            await Task.Delay(500); // Poll every 500ms
+        }
+
+        throw new TimeoutException(
+            $"Saga for order {orderId} did not complete within {timeout.TotalSeconds} seconds");
+    }
+
+    private async Task<OrderDto?> GetOrderAsync(Guid orderId)
+    {
+        var response = await _client.GetAsync($"/api/orders/{orderId}");
+        if (!response.IsSuccessStatusCode)
+            return null;
+
+        return await response.Content.ReadFromJsonAsync<OrderDto>();
+    }
+
+    private async Task<ProductDto?> GetProductAsync(Guid productId)
+    {
+        var response = await _client.GetAsync($"/api/products/{productId}");
+        if (!response.IsSuccessStatusCode)
+            return null;
+
+        return await response.Content.ReadFromJsonAsync<ProductDto>();
+    }
+
+    private async Task<List<PaymentDto>> GetPaymentsForOrderAsync(Guid orderId)
+    {
+        var response = await _client.GetAsync($"/api/payments?orderId={orderId}");
+        if (!response.IsSuccessStatusCode)
+            return new List<PaymentDto>();
+
+        return await response.Content.ReadFromJsonAsync<List<PaymentDto>>() 
+               ?? new List<PaymentDto>();
+    }
+
+    private async Task<List<InboxMessageDto>> GetInboxMessagesAsync(Guid eventId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var inboxRepository = scope.ServiceProvider.GetRequiredService<IInboxRepository>();
+        return await inboxRepository.GetByEventIdAsync(eventId);
+    }
+
+    private async Task<List<DomainEventDto>> GetDomainEventsAsync(Guid orderId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var eventStore = scope.ServiceProvider.GetRequiredService<IEventStore>();
+        return await eventStore.GetEventsAsync(orderId);
+    }
+
+    private async Task<List<IntegrationEventDto>> GetPublishedEventsAsync(Guid orderId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var outboxRepository = scope.ServiceProvider.GetRequiredService<IOutboxRepository>();
+        return await outboxRepository.GetByAggregateIdAsync(orderId);
+    }
+
+    private async Task<Guid> CreateProductWithStock(int quantity)
+    {
+        var createProductRequest = new
+        {
+            Name = "Test Product",
+            Description = "Test Description",
+            Price = 100.00m,
+            Stock = quantity
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/products", createProductRequest);
+        return await response.Content.ReadFromJsonAsync<Guid>();
+    }
+
+    private CreateOrderRequest CreateTestOrderRequest() => new()
+    {
+        CustomerId = Guid.NewGuid(),
+        Items = new[]
+        {
+            new OrderItemDto
+            {
+                ProductId = Guid.NewGuid(),
+                ProductName = "Test Product",
+                Quantity = 2,
+                UnitPrice = 100.00m
+            }
+        },
+        ShippingAddress = CreateTestAddress()
+    };
+
+    private AddressDto CreateTestAddress() => new()
+    {
+        Street = "123 Main St",
+        City = "Springfield",
+        State = "IL",
+        ZipCode = "62701",
+        Country = "USA"
+    };
+
+    private void MockPaymentGatewayFailure(string reason)
+    {
+        // Implementation to mock payment gateway failure
+        // This would typically involve setting up a test double or feature flag
+    }
+
+    private void MockPaymentGatewayDelay(TimeSpan delay)
+    {
+        // Implementation to mock payment gateway delay
+    }
+
+    private void MockPaymentGatewayTransientFailure(int failCount)
+    {
+        // Implementation to mock transient failures
+    }
+
+    #endregion
+}
+
+#region DTOs (move these to shared test utilities)
+
+public record CreateOrderRequest
+{
+    public Guid CustomerId { get; init; }
+    public OrderItemDto[] Items { get; init; } = Array.Empty<OrderItemDto>();
+    public AddressDto ShippingAddress { get; init; } = null!;
+}
+
+public record OrderItemDto
+{
+    public Guid ProductId { get; init; }
+    public string ProductName { get; init; } = string.Empty;
+    public int Quantity { get; init; }
+    public decimal UnitPrice { get; init; }
+}
+
+public record AddressDto
+{
+    public string Street { get; init; } = string.Empty;
+    public string City { get; init; } = string.Empty;
+    public string State { get; init; } = string.Empty;
+    public string ZipCode { get; init; } = string.Empty;
+    public string Country { get; init; } = string.Empty;
+}
+
+public record OrderDto
+{
+    public Guid Id { get; init; }
+    public string Status { get; init; } = string.Empty;
+    public decimal TotalAmount { get; init; }
+    public string? CancellationReason { get; init; }
+}
+
+public record ProductDto
+{
+    public Guid Id { get; init; }
+    public int AvailableStock { get; init; }
+    public int ReservedStock { get; init; }
+    public int InitialStock { get; init; }
+}
+
+public record PaymentDto
+{
+    public Guid Id { get; init; }
+    public Guid OrderId { get; init; }
+    public string Status { get; init; } = string.Empty;
+}
+
+public record InboxMessageDto
+{
+    public Guid EventId { get; init; }
+    public DateTime? ProcessedAt { get; init; }
+    public int ProcessedCount { get; init; }
+}
+
+public record DomainEventDto
+{
+    public string EventType { get; init; } = string.Empty;
+}
+
+public record IntegrationEventDto
+{
+    public string EventType { get; init; } = string.Empty;
+}
+
+public record ConnectionStrings
+{
+    public string PostgreSql { get; set; } = string.Empty;
+    public string Redis { get; set; } = string.Empty;
+    public string Kafka { get; set; } = string.Empty;
+}
+
+#endregion

@@ -1,0 +1,9 @@
+global using BuildingBlocks.Infrastructure.Persistence;
+global using BuildingBlocks.Infrastructure.Outbox;
+global using BuildingBlocks.EventBus.Abstractions;
+global using Inventory.Domain.Aggregates;
+global using Inventory.Application.Commands;
+global using Inventory.Application.DTOs;
+global using Inventory.Application.Queries;
+global using Microsoft.EntityFrameworkCore;
+global using Microsoft.Extensions.Logging;

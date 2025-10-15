@@ -1,0 +1,10 @@
+global using BuildingBlocks.Application;
+global using BuildingBlocks.Application.Commands;
+global using BuildingBlocks.Application.Queries;
+global using BuildingBlocks.Domain.Results;
+global using MediatR;
+global using Microsoft.Extensions.Logging;
+global using Payment.Domain;
+global using Payment.Domain.Aggregates.PaymentAggregate;
+global using Payment.Domain.Enums;
+global using Payment.Domain.ValueObjects;

@@ -1,0 +1,80 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: distributed-commerce-prod
+
+bases:
+  - ../../base
+  - ../../infrastructure
+  - ../../services
+
+namePrefix: prod-
+
+commonLabels:
+  environment: production
+
+replicas:
+  - name: api-gateway
+    count: 3
+  - name: identity-service
+    count: 3
+  - name: catalog-service
+    count: 5
+  - name: order-service
+    count: 5
+  - name: payment-service
+    count: 3
+  - name: inventory-service
+    count: 4
+  - name: shipping-service
+    count: 3
+  - name: notification-service
+    count: 3
+  - name: analytics-service
+    count: 3
+
+configMapGenerator:
+  - name: shared-config
+    behavior: merge
+    literals:
+      - ASPNETCORE_ENVIRONMENT=Production
+
+patches:
+  # Increase resources for production
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 1Gi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 2Gi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 500m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: 2000m
+    target:
+      kind: Deployment
+      labelSelector: "tier=backend"
+  
+  # Enable pod anti-affinity for high availability
+  - patch: |-
+      - op: add
+        path: /spec/template/spec/affinity
+        value:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                    - catalog-service
+                    - order-service
+                topologyKey: kubernetes.io/hostname
+    target:
+      kind: Deployment
+      name: catalog-service|order-service

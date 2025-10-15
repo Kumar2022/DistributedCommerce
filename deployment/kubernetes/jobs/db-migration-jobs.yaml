@@ -1,0 +1,126 @@
+# Database Migration Job
+# Runs Entity Framework migrations for all services
+
+---
+# Identity Service Migration Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: identity-migration
+  namespace: distributed-commerce
+spec:
+  template:
+    spec:
+      serviceAccountName: db-migration-sa
+      restartPolicy: OnFailure
+      containers:
+      - name: migration
+        image: distributed-commerce/identity-service:latest
+        command: ["dotnet", "ef", "database", "update"]
+        env:
+        - name: ConnectionStrings__DefaultConnection
+          value: "Host=postgres-service;Port=5432;Database=IdentityDb;Username=$(POSTGRES_USER);Password=$(POSTGRES_PASSWORD)"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: shared-secrets
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: shared-secrets
+              key: POSTGRES_PASSWORD
+
+---
+# Catalog Service Migration Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: catalog-migration
+  namespace: distributed-commerce
+spec:
+  template:
+    spec:
+      serviceAccountName: db-migration-sa
+      restartPolicy: OnFailure
+      containers:
+      - name: migration
+        image: distributed-commerce/catalog-service:latest
+        command: ["dotnet", "ef", "database", "update"]
+        env:
+        - name: ConnectionStrings__DefaultConnection
+          value: "Host=postgres-service;Port=5432;Database=CatalogDb;Username=$(POSTGRES_USER);Password=$(POSTGRES_PASSWORD)"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: shared-secrets
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: shared-secrets
+              key: POSTGRES_PASSWORD
+
+---
+# Order Service Migration Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: order-migration
+  namespace: distributed-commerce
+spec:
+  template:
+    spec:
+      serviceAccountName: db-migration-sa
+      restartPolicy: OnFailure
+      containers:
+      - name: migration
+        image: distributed-commerce/order-service:latest
+        command: ["dotnet", "ef", "database", "update"]
+        env:
+        - name: ConnectionStrings__DefaultConnection
+          value: "Host=postgres-service;Port=5432;Database=OrderDb;Username=$(POSTGRES_USER);Password=$(POSTGRES_PASSWORD)"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: shared-secrets
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: shared-secrets
+              key: POSTGRES_PASSWORD
+
+---
+# Payment Service Migration Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: payment-migration
+  namespace: distributed-commerce
+spec:
+  template:
+    spec:
+      serviceAccountName: db-migration-sa
+      restartPolicy: OnFailure
+      containers:
+      - name: migration
+        image: distributed-commerce/payment-service:latest
+        command: ["dotnet", "ef", "database", "update"]
+        env:
+        - name: ConnectionStrings__DefaultConnection
+          value: "Host=postgres-service;Port=5432;Database=PaymentDb;Username=$(POSTGRES_USER);Password=$(POSTGRES_PASSWORD)"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: shared-secrets
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: shared-secrets
+              key: POSTGRES_PASSWORD
+
+---
+# All other services follow the same pattern...
+# Inventory, Shipping, Notification, Analytics

@@ -1,0 +1,16 @@
+global using BuildingBlocks.Application.Commands;
+global using BuildingBlocks.Application.Queries;
+global using BuildingBlocks.Domain.Results;
+global using BuildingBlocks.EventBus;
+global using BuildingBlocks.EventBus.Abstractions;
+global using FluentValidation;
+global using MediatR;
+global using Microsoft.Extensions.Logging;
+global using Shipping.Application.Commands;
+global using Shipping.Application.DTOs;
+global using Shipping.Application.Queries;
+global using Shipping.Domain.Aggregates;
+global using Shipping.Domain.Events;
+global using Shipping.Domain.Exceptions;
+global using Shipping.Domain.Repositories;
+global using Shipping.Domain.ValueObjects;

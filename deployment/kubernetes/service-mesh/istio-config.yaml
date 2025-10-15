@@ -1,0 +1,225 @@
+# Istio Service Mesh Configuration
+# Provides mTLS, traffic management, and advanced observability
+
+---
+# Install Istio first:
+# curl -L https://istio.io/downloadIstio | sh -
+# cd istio-*
+# export PATH=$PWD/bin:$PATH
+# istioctl install --set profile=production -y
+
+---
+# Enable Istio injection for namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: distributed-commerce
+  labels:
+    istio-injection: enabled
+
+---
+# Istio Gateway (replaces Ingress)
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: distributed-commerce-gateway
+  namespace: distributed-commerce
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "*"
+    tls:
+      httpsRedirect: true
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: distributed-commerce-tls
+    hosts:
+    - "api.distributed-commerce.com"
+
+---
+# Virtual Service for API Gateway
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: api-gateway-vs
+  namespace: distributed-commerce
+spec:
+  hosts:
+  - "api.distributed-commerce.com"
+  gateways:
+  - distributed-commerce-gateway
+  http:
+  - match:
+    - uri:
+        prefix: /api/v1/
+    route:
+    - destination:
+        host: api-gateway-service
+        port:
+          number: 80
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+
+---
+# Destination Rule for Circuit Breaking
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: catalog-service-dr
+  namespace: distributed-commerce
+spec:
+  host: catalog-service
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 2
+    outlierDetection:
+      consecutiveErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 50
+
+---
+# Peer Authentication (mTLS)
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: distributed-commerce
+spec:
+  mtls:
+    mode: STRICT
+
+---
+# Authorization Policy (RBAC)
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: api-gateway-authz
+  namespace: distributed-commerce
+spec:
+  selector:
+    matchLabels:
+      app: api-gateway
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: ["istio-system"]
+  - to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE"]
+
+---
+# Request Authentication (JWT validation)
+apiVersion: security.istio.io/v1beta1
+kind: RequestAuthentication
+metadata:
+  name: jwt-auth
+  namespace: distributed-commerce
+spec:
+  selector:
+    matchLabels:
+      app: api-gateway
+  jwtRules:
+  - issuer: "https://api-gateway.distributed-commerce.svc.cluster.local"
+    jwksUri: "https://api-gateway.distributed-commerce.svc.cluster.local/.well-known/jwks.json"
+
+---
+# Traffic Split for Canary Deployment
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: catalog-canary
+  namespace: distributed-commerce
+spec:
+  hosts:
+  - catalog-service
+  http:
+  - match:
+    - headers:
+        x-canary:
+          exact: "true"
+    route:
+    - destination:
+        host: catalog-service
+        subset: v2
+      weight: 100
+  - route:
+    - destination:
+        host: catalog-service
+        subset: v1
+      weight: 90
+    - destination:
+        host: catalog-service
+        subset: v2
+      weight: 10
+
+---
+# Destination Rule for Canary
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: catalog-service-canary-dr
+  namespace: distributed-commerce
+spec:
+  host: catalog-service
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+  - name: v2
+    labels:
+      version: v2
+
+---
+# Service Entry for External Dependencies
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: stripe-api
+  namespace: distributed-commerce
+spec:
+  hosts:
+  - api.stripe.com
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  location: MESH_EXTERNAL
+  resolution: DNS
+
+---
+# Telemetry for custom metrics
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: custom-metrics
+  namespace: distributed-commerce
+spec:
+  metrics:
+  - providers:
+    - name: prometheus
+    dimensions:
+      request_protocol: request.protocol
+      response_code: response.code
+      source_service: source.workload.name
+      destination_service: destination.workload.name

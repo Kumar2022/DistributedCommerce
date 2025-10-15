@@ -1,0 +1,75 @@
+# Pod Security Standards
+# Enforces security best practices for all pods
+
+---
+# Pod Security Context Template (to be added to all deployments)
+# This file contains examples to be integrated into deployment manifests
+
+# Example: Restrictive Pod Security Context
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: security-context-examples
+  namespace: distributed-commerce
+data:
+  restrictive-pod-context: |
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      fsGroup: 1000
+      seccompProfile:
+        type: RuntimeDefault
+  
+  restrictive-container-context: |
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      runAsUser: 1000
+
+---
+# Pod Security Policy (deprecated in K8s 1.25+, use Pod Security Standards instead)
+# For older clusters, uncomment this:
+
+# apiVersion: policy/v1beta1
+# kind: PodSecurityPolicy
+# metadata:
+#   name: restricted
+# spec:
+#   privileged: false
+#   allowPrivilegeEscalation: false
+#   requiredDropCapabilities:
+#     - ALL
+#   volumes:
+#     - 'configMap'
+#     - 'emptyDir'
+#     - 'projected'
+#     - 'secret'
+#     - 'downwardAPI'
+#     - 'persistentVolumeClaim'
+#   runAsUser:
+#     rule: 'MustRunAsNonRoot'
+#   seLinux:
+#     rule: 'RunAsAny'
+#   fsGroup:
+#     rule: 'RunAsAny'
+#   readOnlyRootFilesystem: true
+
+---
+# Pod Security Standards Enforcement (K8s 1.23+)
+# Apply to namespace via labels:
+# kubectl label namespace distributed-commerce pod-security.kubernetes.io/enforce=restricted
+
+# Or use this namespace configuration:
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: distributed-commerce-secure
+  labels:
+    name: distributed-commerce-secure
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

@@ -1,0 +1,303 @@
+# PostgreSQL High Availability Configuration
+# Using Patroni for leader election and replication
+
+---
+# ConfigMap for Patroni configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: patroni-config
+  namespace: distributed-commerce
+data:
+  patroni.yml: |
+    scope: postgres-cluster
+    namespace: distributed-commerce
+    name: postgres
+    
+    restapi:
+      listen: 0.0.0.0:8008
+      connect_address: ${POD_IP}:8008
+    
+    etcd3:
+      host: etcd-service:2379
+    
+    bootstrap:
+      dcs:
+        ttl: 30
+        loop_wait: 10
+        retry_timeout: 10
+        maximum_lag_on_failover: 1048576
+        postgresql:
+          use_pg_rewind: true
+          parameters:
+            max_connections: 200
+            shared_buffers: 256MB
+            effective_cache_size: 1GB
+            maintenance_work_mem: 64MB
+            checkpoint_completion_target: 0.9
+            wal_buffers: 16MB
+            default_statistics_target: 100
+            random_page_cost: 1.1
+            effective_io_concurrency: 200
+            work_mem: 1MB
+            min_wal_size: 1GB
+            max_wal_size: 4GB
+      
+      initdb:
+      - encoding: UTF8
+      - data-checksums
+      
+      pg_hba:
+      - host replication replicator 0.0.0.0/0 md5
+      - host all all 0.0.0.0/0 md5
+      
+      users:
+        admin:
+          password: admin
+          options:
+            - createrole
+            - createdb
+    
+    postgresql:
+      listen: 0.0.0.0:5432
+      connect_address: ${POD_IP}:5432
+      data_dir: /var/lib/postgresql/data
+      pgpass: /tmp/pgpass
+      authentication:
+        replication:
+          username: replicator
+          password: replicator_password
+        superuser:
+          username: postgres
+          password: postgres
+        rewind:
+          username: rewind_user
+          password: rewind_password
+      parameters:
+        unix_socket_directories: '/var/run/postgresql'
+
+---
+# Etcd for Patroni DCS
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: etcd
+  namespace: distributed-commerce
+spec:
+  serviceName: etcd-service
+  replicas: 3
+  selector:
+    matchLabels:
+      app: etcd
+  template:
+    metadata:
+      labels:
+        app: etcd
+    spec:
+      containers:
+      - name: etcd
+        image: quay.io/coreos/etcd:v3.5.10
+        ports:
+        - containerPort: 2379
+          name: client
+        - containerPort: 2380
+          name: peer
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: ETCD_NAME
+          value: "$(POD_NAME)"
+        - name: ETCD_INITIAL_CLUSTER
+          value: "etcd-0=http://etcd-0.etcd-service:2380,etcd-1=http://etcd-1.etcd-service:2380,etcd-2=http://etcd-2.etcd-service:2380"
+        - name: ETCD_INITIAL_CLUSTER_STATE
+          value: "new"
+        - name: ETCD_INITIAL_CLUSTER_TOKEN
+          value: "etcd-cluster"
+        - name: ETCD_LISTEN_PEER_URLS
+          value: "http://0.0.0.0:2380"
+        - name: ETCD_LISTEN_CLIENT_URLS
+          value: "http://0.0.0.0:2379"
+        - name: ETCD_ADVERTISE_CLIENT_URLS
+          value: "http://$(POD_NAME).etcd-service:2379"
+        - name: ETCD_INITIAL_ADVERTISE_PEER_URLS
+          value: "http://$(POD_NAME).etcd-service:2380"
+        volumeMounts:
+        - name: etcd-storage
+          mountPath: /var/lib/etcd
+  volumeClaimTemplates:
+  - metadata:
+      name: etcd-storage
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: standard
+      resources:
+        requests:
+          storage: 5Gi
+
+---
+# Etcd Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: etcd-service
+  namespace: distributed-commerce
+spec:
+  clusterIP: None
+  selector:
+    app: etcd
+  ports:
+  - port: 2379
+    targetPort: 2379
+    name: client
+  - port: 2380
+    targetPort: 2380
+    name: peer
+
+---
+# PostgreSQL StatefulSet with Patroni
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-ha
+  namespace: distributed-commerce
+spec:
+  serviceName: postgres-ha-service
+  replicas: 3
+  selector:
+    matchLabels:
+      app: postgres-ha
+  template:
+    metadata:
+      labels:
+        app: postgres-ha
+    spec:
+      securityContext:
+        fsGroup: 999
+      containers:
+      - name: postgres
+        image: postgres:16-alpine
+        ports:
+        - containerPort: 5432
+          name: postgres
+        - containerPort: 8008
+          name: patroni
+        env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: shared-secrets
+              key: POSTGRES_PASSWORD
+        - name: PATRONI_SCOPE
+          value: "postgres-cluster"
+        - name: PATRONI_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: PATRONI_KUBERNETES_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: PATRONI_KUBERNETES_LABELS
+          value: "{app: postgres-ha}"
+        - name: PATRONI_SUPERUSER_USERNAME
+          value: "postgres"
+        - name: PATRONI_SUPERUSER_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: shared-secrets
+              key: POSTGRES_PASSWORD
+        - name: PATRONI_REPLICATION_USERNAME
+          value: "replicator"
+        - name: PATRONI_REPLICATION_PASSWORD
+          value: "replicator_password"
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        - name: patroni-config
+          mountPath: /etc/patroni
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8008
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /readiness
+            port: 8008
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: patroni-config
+        configMap:
+          name: patroni-config
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-storage
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: standard
+      resources:
+        requests:
+          storage: 20Gi
+
+---
+# PostgreSQL HA Service (headless)
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-ha-service
+  namespace: distributed-commerce
+spec:
+  clusterIP: None
+  selector:
+    app: postgres-ha
+  ports:
+  - port: 5432
+    targetPort: 5432
+    name: postgres
+
+---
+# PostgreSQL HA Service (for connections - points to master)
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-master
+  namespace: distributed-commerce
+spec:
+  selector:
+    app: postgres-ha
+    role: master
+  ports:
+  - port: 5432
+    targetPort: 5432
+    name: postgres
+
+---
+# PostgreSQL Read-Only Service (for read replicas)
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-replica
+  namespace: distributed-commerce
+spec:
+  selector:
+    app: postgres-ha
+    role: replica
+  ports:
+  - port: 5432
+    targetPort: 5432
+    name: postgres

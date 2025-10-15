@@ -1,0 +1,66 @@
+# Update Service Deployments with Security Context
+# This patch adds security context to all service deployments
+
+---
+# Security Context Patch for API Gateway
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: distributed-commerce
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: api-gateway-sa
+      containers:
+      - name: api-gateway
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          readOnlyRootFilesystem: false  # Set to true if app supports it
+          runAsNonRoot: true
+          runAsUser: 1000
+
+---
+# Security Context Patch for Backend Services
+# Apply this pattern to all backend services
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog-service
+  namespace: distributed-commerce
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: backend-service-sa
+      containers:
+      - name: catalog-service
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 1000
+
+---
+# Instructions to apply security context to all services:
+# 1. For each service deployment, add the security context above
+# 2. Update the serviceAccountName to appropriate SA
+# 3. If the service needs write access to filesystem, set readOnlyRootFilesystem: false
+# 4. Apply with: kubectl patch deployment <service-name> -n distributed-commerce --patch-file security-context-patch.yaml

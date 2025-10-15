@@ -1,0 +1,60 @@
+# .gitignore additions for Kubernetes deployment
+
+# Secrets - DO NOT COMMIT
+deployment/kubernetes/base/secrets.yaml
+**/secrets-*.yaml
+
+# Local Kubernetes config
+.kube/
+kubeconfig
+
+# Helm charts lock files
+**/Chart.lock
+**/charts/*.tgz
+
+# Temporary files
+*.tmp
+*.swp
+*.bak
+
+# Environment-specific overrides
+deployment/kubernetes/overlays/*/secrets.yaml
+deployment/kubernetes/overlays/*/local-*.yaml
+
+# CI/CD generated files
+.github/workflows/generated/
+deployment/kubernetes/generated/
+
+# Backup files
+backups/
+*.sql
+*.sql.gz
+
+# IDE and OS files
+.DS_Store
+.idea/
+.vscode/
+*.suo
+*.user
+
+# Build artifacts
+**/bin/
+**/obj/
+**/dist/
+**/build/
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# Terraform state (if using)
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# Logs
+*.log
+logs/
+
+# Markdown files
+*.md

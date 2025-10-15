@@ -1,0 +1,145 @@
+# Pod Disruption Budgets for High Availability
+# Ensures minimum availability during voluntary disruptions
+
+---
+# API Gateway PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api-gateway-pdb
+  namespace: distributed-commerce
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: api-gateway
+
+---
+# Identity Service PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: identity-service-pdb
+  namespace: distributed-commerce
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: identity-service
+
+---
+# Catalog Service PDB (more critical, keep 2 available)
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: catalog-service-pdb
+  namespace: distributed-commerce
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: catalog-service
+
+---
+# Order Service PDB (more critical, keep 2 available)
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: order-service-pdb
+  namespace: distributed-commerce
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: order-service
+
+---
+# Payment Service PDB (critical, keep 2 available)
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: payment-service-pdb
+  namespace: distributed-commerce
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: payment-service
+
+---
+# Inventory Service PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: inventory-service-pdb
+  namespace: distributed-commerce
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: inventory-service
+
+---
+# Shipping Service PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: shipping-service-pdb
+  namespace: distributed-commerce
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: shipping-service
+
+---
+# Notification Service PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: notification-service-pdb
+  namespace: distributed-commerce
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: notification-service
+
+---
+# Analytics Service PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: analytics-service-pdb
+  namespace: distributed-commerce
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: analytics-service
+
+---
+# PostgreSQL PDB (for when replicas are added)
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: postgres-pdb
+  namespace: distributed-commerce
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: postgres
+
+---
+# Kafka PDB (for when replicas are added)
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: kafka-pdb
+  namespace: distributed-commerce
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: kafka

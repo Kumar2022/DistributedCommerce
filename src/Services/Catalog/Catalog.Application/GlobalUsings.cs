@@ -1,0 +1,15 @@
+global using System;
+global using System.Collections.Generic;
+global using System.Linq;
+global using System.Threading;
+global using System.Threading.Tasks;
+global using BuildingBlocks.Domain;
+global using BuildingBlocks.Domain.Results;
+global using BuildingBlocks.Application.Commands;
+global using BuildingBlocks.Application.Queries;
+global using Catalog.Domain.Aggregates;
+global using Catalog.Domain.Events;
+global using Catalog.Domain.Repositories;
+global using MediatR;
+global using FluentValidation;
+global using Microsoft.Extensions.Logging;

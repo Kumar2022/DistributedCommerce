@@ -1,0 +1,15 @@
+global using BuildingBlocks.Application.Commands;
+global using BuildingBlocks.Application.Queries;
+global using BuildingBlocks.Domain.Results;
+global using BuildingBlocks.EventBus.Abstractions;
+global using MediatR;
+global using Microsoft.Extensions.Logging;
+global using Notification.Domain.Aggregates;
+global using Notification.Domain.Events;
+global using Notification.Domain.Repositories;
+global using Notification.Domain.ValueObjects;
+global using System;
+global using System.Collections.Generic;
+global using System.Linq;
+global using System.Threading;
+global using System.Threading.Tasks;
