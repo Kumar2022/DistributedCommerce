@@ -56,5 +56,6 @@ docker-compose.override.yml
 *.log
 logs/
 
-# Markdown files
+# Markdown files (except README.md)
 *.md
+!README.md
