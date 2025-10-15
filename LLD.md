@@ -345,7 +345,7 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
 
 #### Catalog Service Database (catalog_db)
 
-```
+
 ┌──────────────────────────────────────────────────────────────┐
 │  categories                                                  │
 ├──────────────────────────────────────────────────────────────┤
@@ -419,7 +419,7 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
 
 #### Order Service Database (order_db)
 
-```
+
 ┌──────────────────────────────────────────────────────────────┐
 │  orders                                                      │
 ├──────────────────────────────────────────────────────────────┤
@@ -480,7 +480,7 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
 
 #### Payment Service Database (payment_db)
 
-```
+
 ┌──────────────────────────────────────────────────────────────┐
 │  payments                                                    │
 ├──────────────────────────────────────────────────────────────┤
@@ -518,7 +518,7 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
 
 #### Inventory Service Database (inventory_db)
 
-```
+
 ┌──────────────────────────────────────────────────────────────┐
 │  warehouses                                                  │
 ├──────────────────────────────────────────────────────────────┤
@@ -569,7 +569,7 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
 
 #### Shipping Service Database (shipping_db)
 
-```
+
 ┌──────────────────────────────────────────────────────────────┐
 │  shipments                                                   │
 ├──────────────────────────────────────────────────────────────┤
@@ -610,7 +610,7 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
 
 #### Notification Service Database (notification_db)
 
-```
+
 ┌──────────────────────────────────────────────────────────────┐
 │  templates                                                   │
 ├──────────────────────────────────────────────────────────────┤
@@ -650,7 +650,7 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
 
 #### Analytics Service Database (analytics_db)
 
-```
+
 ┌──────────────────────────────────────────────────────────────┐
 │  events  (Raw Event Stream)                                  │
 ├──────────────────────────────────────────────────────────────┤
@@ -681,7 +681,7 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
 │    idx_metrics_name_period ON (metric_name, period)          │
 │    idx_metrics_timestamp ON (timestamp DESC)                 │
 └──────────────────────────────────────────────────────────────┘
-```
+
 
 **Database Design Principles**:
 - **Each service has its own database** (Database-per-Service pattern)
@@ -697,7 +697,7 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
 
 ### CQRS Pattern Flow
 
-```
+
 ┌─────────────────────────────────────────────────────────────────────────┐
 │              CQRS (Command Query Responsibility Segregation)            │
 │                    Using MediatR + EF Core + Redis                      │
@@ -869,7 +869,7 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
     • Redis caching for hot data
     • Can use read replicas
     • Separate scaling from writes
-```
+
 
 ### Command Pattern
 ```csharp
