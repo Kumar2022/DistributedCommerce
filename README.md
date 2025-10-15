@@ -607,9 +607,6 @@ kubectl describe pod [pod-name] -n distributed-commerce
 - 💬 Join our [Discussions](https://github.com/yourusername/DistributedCommerce/discussions)
 - 📧 Email: support@distributedcommerce.com
 
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 
