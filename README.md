@@ -55,7 +55,7 @@ The platform leverages shared building blocks to ensure consistency across servi
 - **Domain** - Common domain models, value objects, and domain events
 - **Application** - CQRS, MediatR handlers, and application services
 - **Infrastructure** - Database access, caching, and external integrations
-- **EventBus** - Asynchronous messaging using RabbitMQ for inter-service communication
+- **EventBus** - Asynchronous messaging using Apache Kafka for inter-service communication
 - **Authentication** - Shared JWT authentication and authorization logic
 - **Observability** - Distributed tracing, metrics, and logging with OpenTelemetry
 - **Resilience** - Circuit breakers, retries, and fallback policies using Polly
@@ -82,7 +82,8 @@ The platform leverages shared building blocks to ensure consistency across servi
 - **PostgreSQL** - Primary relational database
 - **MongoDB** - Document database for analytics and flexible schemas
 - **Redis** - Distributed caching and session storage
-- **RabbitMQ** - Message broker for asynchronous communication
+- **Apache Kafka** - Event streaming platform for asynchronous communication
+- **Confluent Schema Registry** - Schema management for Kafka (Avro/Protobuf)
 
 ### Observability
 - **OpenTelemetry** - Distributed tracing and metrics collection
@@ -125,22 +126,24 @@ The fastest way to get the entire platform running locally:
 git clone https://github.com/yourusername/DistributedCommerce.git
 cd DistributedCommerce
 
-# Start all services with Docker Compose
-docker-compose up -d
+# Start all services with Docker Compose (core stack)
+docker compose -f deployment/docker/docker-compose.yml up -d
 
 # Check service health
-docker-compose ps
+docker compose -f deployment/docker/docker-compose.yml ps
 ```
 
 The services will be available at:
-- Identity API: http://localhost:5001
-- Catalog API: http://localhost:5002
-- Order API: http://localhost:5003
-- Payment API: http://localhost:5004
-- Inventory API: http://localhost:5005
-- Shipping API: http://localhost:5006
-- Notification API: http://localhost:5007
-- Analytics API: http://localhost:5008
+- API Gateway (HTTP): http://localhost:5000
+- API Gateway (HTTPS): https://localhost:5001
+- Identity API: http://localhost:5010
+- Order API: http://localhost:5020
+- Payment API: http://localhost:5030
+- Inventory API: http://localhost:5040
+- Catalog API: http://localhost:5050
+- Shipping API: http://localhost:5060
+- Notification API: http://localhost:5070
+- Analytics API: http://localhost:5080
 
 ### Running Services Individually
 
@@ -200,7 +203,7 @@ Build all service images:
 
 ```bash
 # Build all images
-docker-compose build
+docker compose -f deployment/docker/docker-compose.yml build
 
 # Build a specific service
 docker build -f src/Services/Catalog/Catalog.API/Dockerfile -t catalog-api .
@@ -215,15 +218,22 @@ cd deployment/kubernetes
 
 ### Docker Compose Configurations
 
-- `docker-compose.yml` - Core services
-- `docker-compose.observability.yml` - Monitoring stack (Prometheus, Grafana, Jaeger)
-- `docker-compose.override.yml` - Development overrides
+- `deployment/docker/docker-compose.yml` - Core services and infrastructure (Postgres, Redis, Kafka, Jaeger, Seq, Elasticsearch)
+- `deployment/docker-compose.observability.yml` - Optional monitoring stack (Prometheus, Grafana, Jaeger, OpenTelemetry Collector)
 
-Start everything including observability:
+Start the core stack:
 
 ```bash
-docker-compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+docker compose -f deployment/docker/docker-compose.yml up -d
 ```
+
+Optionally, start the observability stack separately:
+
+```bash
+docker compose -f deployment/docker-compose.observability.yml up -d
+```
+
+Note: The core stack already includes Jaeger and Seq. Use the observability stack when you want Prometheus/Grafana and a standalone OTEL Collector.
 
 ## ☸️ Kubernetes Deployment
 
@@ -237,7 +247,7 @@ cd deployment/kubernetes
 # Setup local environment (creates namespaces, secrets, etc.)
 ./setup-local.sh
 
-# Deploy infrastructure (databases, message brokers)
+# Deploy infrastructure (databases, message broker)
 kubectl apply -k infrastructure/
 
 # Deploy all services
@@ -255,7 +265,7 @@ The deployment includes:
 - PostgreSQL clusters for each service
 - MongoDB for analytics
 - Redis for caching
-- RabbitMQ for messaging
+- Kafka for messaging (with Schema Registry)
 
 **Observability**
 - Prometheus for metrics
@@ -344,8 +354,9 @@ Each service can be configured via environment variables or `appsettings.json`:
 # Database connection
 ConnectionStrings__DefaultConnection="Host=localhost;Database=catalog;Username=postgres;Password=postgres"
 
-# RabbitMQ
-EventBus__Connection="amqp://guest:guest@localhost:5672"
+# Kafka
+Kafka__BootstrapServers="localhost:9093"
+Kafka__SchemaRegistryUrl="http://localhost:8081"
 
 # Redis
 Redis__Configuration="localhost:6379"
@@ -537,7 +548,7 @@ DistributedCommerce/
 │   ├── Load/                    # Performance tests
 │   └── Shared/                  # Test utilities
 ├── deployment/
-│   ├── docker/                  # Dockerfiles
+│   ├── docker/                  # Dockerfiles and core compose
 │   ├── kubernetes/              # K8s manifests
 │   ├── helm/                    # Helm charts
 │   ├── terraform/               # IaC scripts
@@ -569,13 +580,13 @@ Additional documentation is available in the `/docs` folder:
 docker ps
 
 # Check logs
-docker-compose logs [service-name]
+docker compose -f deployment/docker/docker-compose.yml logs [service-name]
 ```
 
 **Database connection errors**
 ```bash
 # Verify database is running
-docker-compose ps postgres
+docker compose -f deployment/docker/docker-compose.yml ps postgres
 
 # Check connection string in appsettings.json
 ```
@@ -585,7 +596,7 @@ docker-compose ps postgres
 # Check what's using the port
 lsof -i :[port-number]
 
-# Update port in docker-compose.yml if needed
+# Update port in deployment/docker/docker-compose.yml if needed
 ```
 
 **Kubernetes pods not starting**
@@ -633,4 +644,4 @@ If you find this project helpful, please consider:
 
 **Built with ❤️ by developers, for developers**
 
-*Last updated: October 2024*
+*Last updated: October 2025*
