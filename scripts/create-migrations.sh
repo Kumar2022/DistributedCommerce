@@ -8,7 +8,7 @@ set -e
 PROJECT_ROOT="/Users/omkarkumar/RiderProjects/DistributedCommerce"
 cd "$PROJECT_ROOT"
 
-echo "🚀 Creating EF Core Migrations for all services..."
+echo " Creating EF Core Migrations for all services..."
 echo ""
 
 # Function to create design-time factory
@@ -40,7 +40,7 @@ public class ${context_name}Factory : IDesignTimeDbContextFactory<${context_name
 }
 EOF
     
-    echo "✅ Created factory for $service"
+    echo " Created factory for $service"
 }
 
 # Function to create migration
@@ -48,7 +48,7 @@ create_migration() {
     local service=$1
     local context_name=$2
     
-    echo "🔧 Creating migration for $service..."
+    echo " Creating migration for $service..."
     
     cd "$PROJECT_ROOT"
     dotnet ef migrations add InitialCreate \
@@ -59,9 +59,9 @@ create_migration() {
         2>&1 | grep -E "(Build|succeeded|Migration|Done|error)" || true
     
     if [ $? -eq 0 ]; then
-        echo "✅ Migration created for $service"
+        echo "Migration created for $service"
     else
-        echo "❌ Failed to create migration for $service"
+        echo "Failed to create migration for $service"
     fi
     echo ""
 }
@@ -94,9 +94,9 @@ for service in "${!services[@]}"; do
     echo ""
 done
 
-echo "🎉 All migrations created successfully!"
+echo " All migrations created successfully!"
 echo ""
-echo "📝 Next steps:"
+echo " Next steps:"
 echo "  1. Review migrations in each service's Persistence/Migrations folder"
 echo "  2. Ensure Outbox, Inbox, DLQ, and SagaState tables are included"
 echo "  3. Run 'dotnet ef database update' for each service to apply migrations"

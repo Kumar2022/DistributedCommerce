@@ -56,7 +56,7 @@ for SERVICE_PATH in "${SERVICES[@]}"; do
             echo "  Manual update required for: $APPSETTINGS_FILE"
         fi
     else
-        echo "  ✗ appsettings.json not found for $SERVICE_NAME"
+        echo "  appsettings.json not found for $SERVICE_NAME"
     fi
 done
 

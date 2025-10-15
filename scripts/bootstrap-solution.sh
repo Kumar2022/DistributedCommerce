@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "🚀 Bootstrapping Distributed Commerce Solution..."
+echo "Bootstrapping Distributed Commerce Solution..."
 echo "=================================================="
 
 # Colors for output
@@ -30,7 +30,7 @@ create_project() {
         cd "$ROOT_DIR"
         dotnet sln add "$project_path/$project_name.csproj"
     else
-        echo -e "${YELLOW}  ⚠️  Project already exists, skipping...${NC}"
+        echo -e "${YELLOW}   Project already exists, skipping...${NC}"
     fi
 }
 
@@ -42,7 +42,7 @@ echo -e "\n${BLUE}Phase 1: Creating Building Blocks Projects${NC}"
 echo "============================================"
 
 # Domain (already created)
-echo -e "${GREEN}✓ BuildingBlocks.Domain - Already created${NC}"
+echo -e "${GREEN}BuildingBlocks.Domain - Already created${NC}"
 
 # Create Infrastructure project
 create_project \
@@ -187,19 +187,19 @@ dotnet build --no-restore
 # ============================================================================
 
 echo -e "\n${GREEN}================================================${NC}"
-echo -e "${GREEN}✅ Solution bootstrap completed successfully!${NC}"
+echo -e "${GREEN} Solution bootstrap completed successfully!${NC}"
 echo -e "${GREEN}================================================${NC}"
 
-echo -e "\n${BLUE}📊 Summary:${NC}"
+echo -e "\n${BLUE} Summary:${NC}"
 echo "  Building Blocks: 3 projects"
 echo "  Services: 8 microservices (~28 projects)"
 echo "  API Gateway: 1 project"
 echo "  Total: ~32 projects"
 
-echo -e "\n${BLUE}📝 Next Steps:${NC}"
+echo -e "\n${BLUE} Next Steps:${NC}"
 echo "  1. Implement Application building blocks (CQRS, Behaviors)"
 echo "  2. Implement Infrastructure building blocks (Repository, UnitOfWork)"
 echo "  3. Implement EventBus with Kafka"
 echo "  4. Start Identity Service implementation"
 
-echo -e "\n${GREEN}Happy coding! 🚀${NC}"
+echo -e "\n${GREEN}Happy coding! ${NC}"

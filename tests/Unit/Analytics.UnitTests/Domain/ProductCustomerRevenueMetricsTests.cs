@@ -117,7 +117,7 @@ public class ProductMetricsTests
         // Arrange
         var metrics = CreateTestMetrics();
 
-        // Act - Simulate funnel: 1000 views → 200 add to cart → 50 purchases
+        // Act - Simulate funnel: 1000 views -> 200 add to cart -> 50 purchases
         for (int i = 0; i < 1000; i++)
         {
             metrics.IncrementViews();

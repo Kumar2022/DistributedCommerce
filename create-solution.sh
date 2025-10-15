@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "🏗️  Creating FAANG-Scale Distributed Commerce Solution..."
+echo "  Creating FAANG-Scale Distributed Commerce Solution..."
 
 # Create solution
 dotnet new sln -n DistributedCommerce
@@ -14,4 +14,4 @@ mkdir -p tests/{Unit,Integration,Load,E2E}
 mkdir -p deployment/{kubernetes,helm,terraform}
 mkdir -p docs
 
-echo "✅ Directory structure created"
+echo " Directory structure created"
